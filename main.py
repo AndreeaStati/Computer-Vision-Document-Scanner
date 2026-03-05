@@ -92,9 +92,9 @@ def is_rectangular_enough(approx, angle_tolerance=40):
 
 def find_document_contour(edged_image, image_shape):
     MAX_CANDIDATES = 10
-    EPSILONS = [0.01, 0.02, 0.03, 0.04, 0.05]   # de la fin la grosier
-    MAX_AREA_RATIO = 0.97   # singura restricție: să nu fie chenarul imaginii
-    MIN_AREA_RATIO = 0.10   # cel puțin 10% din imagine
+    EPSILONS = [0.01, 0.02, 0.03, 0.04, 0.05] 
+    MAX_AREA_RATIO = 0.97  
+    MIN_AREA_RATIO = 0.10  
 
     img_area = image_shape[0] * image_shape[1]
 
