@@ -1,26 +1,41 @@
 import cv2
 import matplotlib.pyplot as plt
 import os
+import numpy as np
 
-def display_image(image_path):
-
-    if not os.path.exists(image_path):
-        print(f"Error: The file '{image_path}' was not found.")
-        return
-
-    img = cv2.imread(image_path)
-
+def load_image(path):
+    if not os.path.exists(path):
+        print(f"Error: File '{path}' not found.")
+        return None
+    img = cv2.imread(path)
     if img is None:
-        print("Error: Could not decode the image. It might be corrupted or an unsupported format.")
+        print(f"Error: Could not decode image.")
+        return None
+    print(f"Successfully loaded: {path}  |  shape: {img.shape}")
+    return img
+
+
+def display_step(image, title="Image Step", is_gray=False):
+    if image is None:
         return
-
-    # Convert BGR to RGB
-    # OpenCV uses BGR by default, but Matplotlib expects RGB.
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    plt.imshow(img_rgb)
-    plt.title("Image Loaded Successfully")
-    #plt.axis('off')  # Hide pixel coordinates
+    plt.figure(figsize=(12, 8))
+    if is_gray:
+        plt.imshow(image, cmap='gray')
+    else:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        plt.imshow(img_rgb)
+    plt.title(title)
+    plt.axis('off')
+    plt.tight_layout()
     plt.show()
 
-display_image("dataset/0144.jpg")
+if __name__ == "__main__":
+
+    path = 'dataset/1.jpg'
+
+    image = load_image(path)
+    if image is None:
+        exit(1)
+    display_step(image, "1. Original Image")
+
+    orig = image.copy()
