@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 
-# base functions and utils 
 
 # ────────────────────────────────────────────── 1. LOAD
 def load_image(path):
@@ -18,21 +17,6 @@ def load_image(path):
     return img
 
 
-# ────────────────────────────────────────────── 2. DISPLAY
-def display_step(image, title="Image Step", is_gray=False):
-    if image is None:
-        return
-    plt.figure(figsize=(12, 8))
-    if is_gray:
-        plt.imshow(image, cmap='gray')
-    else:
-        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        plt.imshow(img_rgb)
-    plt.title(title)
-    plt.axis('off')
-    plt.tight_layout()
-    plt.show()
-
 # ────────────────────────────────────────────── 3. GRAYSCALE
 def convert_to_grayscale(image):
     if image is None:
@@ -41,7 +25,18 @@ def convert_to_grayscale(image):
     print("Grayscale conversion complete.")
     return gray
 
-# ────────────────────────────────────────────── 4. THRESHOLDING 
+
+# ────────────────────────────────────────────── 4. CLAHE
+def apply_clahe(gray_image, clip_limit=2.0, tile_grid=(8, 8)):
+    if gray_image is None:
+        return None
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid)
+    enhanced = clahe.apply(gray_image)
+    print(f"CLAHE applied.")
+    return enhanced
+
+
+# ────────────────────────────────────────────── 5. THRESHOLDING
 def apply_thresholding(gray_image):
     if gray_image is None:
         return None
@@ -50,7 +45,8 @@ def apply_thresholding(gray_image):
     print("Otsu thresholding complete.")
     return binary
 
-# ────────────────────────────────────────────── 5. EDGE DETECTION
+
+# ────────────────────────────────────────────── 6. EDGE DETECTION
 def enhance_for_contours(gray_image):
     if gray_image is None:
         return None
@@ -61,13 +57,13 @@ def enhance_for_contours(gray_image):
     print("Edge detection complete.")
     return dilated
 
-# ────────────────────────────────────────────── 6. FIND DOCUMENT CONTOUR
 
+# ────────────────────────────────────────────── 7. FIND DOCUMENT CONTOUR
 def find_document_contour(edged_image, image_shape):
     MAX_CANDIDATES = 10
-    EPSILONS = [0.01, 0.02, 0.03, 0.04, 0.05]   # de la fin la grosier
-    MAX_AREA_RATIO = 0.97   # singura restricție: să nu fie chenarul imaginii
-    MIN_AREA_RATIO = 0.10   # cel puțin 10% din imagine
+    EPSILONS = [0.01, 0.02, 0.03, 0.04, 0.05]
+    MAX_AREA_RATIO = 0.97
+    MIN_AREA_RATIO = 0.10
 
     img_area = image_shape[0] * image_shape[1]
 
@@ -107,17 +103,19 @@ def find_document_contour(edged_image, image_shape):
     print("Error: no valid contour found.")
     return None, sorted_contours
 
+
 # ────────────────────────────────────────────── 8. ORDER POINTS
 def order_points(pts):
     pts = pts.reshape(4, 2).astype("float32")
     rect = np.zeros((4, 2), dtype="float32")
     s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]    # top-left
-    rect[2] = pts[np.argmax(s)]    # bottom-right
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
     diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)] # top-right
-    rect[3] = pts[np.argmax(diff)] # bottom-left
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
     return rect
+
 
 # ────────────────────────────────────────────── 9. PERSPECTIVE TRANSFORM
 def perspective_transform(image, pts):
@@ -144,54 +142,178 @@ def perspective_transform(image, pts):
     print(f"Perspective transform complete → {warped.shape[1]}x{warped.shape[0]}")
     return warped
 
-if __name__ == "__main__":
 
-    path = 'dataset/1.jpg'
+# ────────────────────────────────────────────── 10. QUALITY SCORE
+def calculate_quality_score(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    edges = cv2.Canny(gray, 50, 150)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=100)
+    skew_deg = 0.0
+    if lines is not None:
+        angles = []
+        for rho, theta in lines[:, 0]:
+            angle = np.degrees(theta) - 90
+            if -45 < angle < 45:
+                angles.append(angle)
+        if angles:
+            skew_deg = float(np.median(angles))
+
+    status = "Clear" if sharpness > 100 else "Blurry/Motion"
+    print(f"Quality → sharpness: {sharpness:.2f} ({status}) | skew: {skew_deg:.2f}°")
+    return {"sharpness": sharpness, "skew_deg": skew_deg, "status": status}
+
+
+# ────────────────────────────────────────────── HELPER: to RGB for display
+def to_rgb(img, is_gray=False):
+    """Converts image to RGB numpy array for matplotlib display."""
+    if img is None:
+        # Return a black placeholder
+        return np.zeros((100, 100, 3), dtype=np.uint8)
+    if is_gray or len(img.shape) == 2:
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+
+# ────────────────────────────────────────────── PROCESS ONE IMAGE
+def process_image(path):
+    """
+    Runs the full pipeline on one image.
+    Returns a list of (title, rgb_image) tuples — one per step.
+    """
+    steps = []
 
     # 1. Load
     image = load_image(path)
     if image is None:
-        exit(1)
-    display_step(image, "1. Original Image")
+        return steps
+    steps.append(("1. Original", to_rgb(image)))
 
     orig = image.copy()
 
-    # Resize la 800px inaltime pentru procesare
     HEIGHT_TARGET = 800.0
     ratio = image.shape[0] / HEIGHT_TARGET
     image_resized = cv2.resize(image, (int(image.shape[1] / ratio), int(HEIGHT_TARGET)))
 
     # 2. Grayscale
     gray = convert_to_grayscale(image_resized)
-    display_step(gray, "2. Grayscale", is_gray=True)
+    steps.append(("2. Grayscale", to_rgb(gray, is_gray=True)))
 
-    # 3. Thresholding --> img binara
-    binary_mask = apply_thresholding(gray)
-    display_step(binary_mask, "4. Binary Image (Otsu)", is_gray=True)
+    # 3. CLAHE
+    gray_clahe = apply_clahe(gray)
+    steps.append(("3. CLAHE", to_rgb(gray_clahe, is_gray=True)))
 
-    # 4. Edge detection
-    edged = enhance_for_contours(gray)
-    display_step(edged, "5. Edges (Canny + Dilation)", is_gray=True)
+    # 4. Thresholding
+    binary_mask = apply_thresholding(gray_clahe)
+    steps.append(("4. Binary (Otsu)", to_rgb(binary_mask, is_gray=True)))
 
-    # 5. Find contour
+    # 5. Edge detection
+    edged = enhance_for_contours(gray_clahe)
+    steps.append(("5. Edges (Canny+Dilation)", to_rgb(edged, is_gray=True)))
+
+    # 6a. Top 10 contours debug
     doc_contour, all_contours = find_document_contour(edged, image_resized.shape)
-
-    # top 10 contururi
     img_debug = image_resized.copy()
     cv2.drawContours(img_debug, all_contours[:10], -1, (0, 255, 255), 2)
-    display_step(img_debug, "6a. Debug – Top 10 Contours")
+    steps.append(("6a. Top 10 Contours", to_rgb(img_debug)))
 
     if doc_contour is not None:
+        # 6b. Selected contour
         img_selection = image_resized.copy()
         cv2.drawContours(img_selection, [doc_contour], -1, (0, 255, 0), 3)
-        display_step(img_selection, "6b. Final Selected Contour")
+        steps.append(("6b. Selected Contour", to_rgb(img_selection)))
 
-    # 6. Perspective transform pe originalul la rezolutie completa
+        # 7. Perspective transform
         pts_orig = doc_contour.reshape(4, 2).astype("float32") * ratio
         warped = perspective_transform(orig, pts_orig)
-        display_step(warped, "7. Warped (Perspective Corrected)")
-    
+        steps.append(("7. Perspective Corrected", to_rgb(warped)))
+
+        # 8. Quality score — doar în consolă
+        calculate_quality_score(warped)
     else:
+        steps.append(("6b. No contour found", to_rgb(image_resized)))
         print("Pipeline stopped: no valid document contour found.")
 
+    return steps
 
+
+# ────────────────────────────────────────────── DISPLAY ALL STEPS IN GRID
+def show_steps_grid(steps, image_name, image_index, total_images):
+    n = len(steps)
+    cols = 3
+    rows = (n + cols - 1) // cols  # ceiling division
+
+    fig, axes = plt.subplots(rows, cols, figsize=(14, rows * 3.5))
+    fig.suptitle(
+        f"[{image_index}/{total_images}]  {image_name}   —   Enter = următoarea imagine  |  Q / Esc = ieșire",
+        fontsize=12, fontweight='bold'
+    )
+    plt.subplots_adjust(top=0.93)
+
+    # Flatten axes for easy indexing
+    axes_flat = axes.flatten() if rows > 1 else (axes if cols > 1 else [axes])
+
+    for i, (title, img) in enumerate(steps):
+        axes_flat[i].imshow(img)
+        axes_flat[i].set_title(title, fontsize=9)
+        axes_flat[i].axis('off')
+
+    # Hide unused subplots
+    for j in range(n, len(axes_flat)):
+        axes_flat[j].axis('off')
+
+    plt.tight_layout()
+
+    # Enter = next image | Q / Escape = quit
+    quit_flag = [False]
+
+    def on_key(event):
+        if event.key == 'enter':
+            plt.close(fig)
+        elif event.key in ('q', 'escape'):
+            quit_flag[0] = True
+            plt.close(fig)
+
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    plt.show()
+
+    return quit_flag[0]
+
+
+# ────────────────────────────────────────────── MAIN
+if __name__ == "__main__":
+    dataset_dir = 'dataset'
+
+    # Collect all image files from dataset/
+    supported_ext = ('.jpg', '.jpeg', '.png')
+    image_files = sorted([
+        f for f in os.listdir(dataset_dir)
+        if f.lower().endswith(supported_ext)
+    ])
+
+    if not image_files:
+        print(f"No images found in '{dataset_dir}/'.")
+        exit(1)
+
+    total = len(image_files)
+    print(f"Found {total} image(s) in '{dataset_dir}/'.\n")
+
+    for idx, filename in enumerate(image_files, start=1):
+        path = os.path.join(dataset_dir, filename)
+        print(f"\n{'='*60}")
+        print(f"Processing image {idx}/{total}: {filename}")
+        print(f"{'='*60}")
+
+        steps = process_image(path)
+
+        if steps:
+            should_quit = show_steps_grid(steps, filename, idx, total)
+            if should_quit:
+                print("\nExecution stopped by user (Q / Escape).")
+                break
+        else:
+            print(f"Skipping display for {filename} (no steps generated).")
+
+    print("\nAll images processed.")
