@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 
+# base functions and utils 
+
+# ────────────────────────────────────────────── 1. LOAD
 def load_image(path):
     if not os.path.exists(path):
         print(f"Error: File '{path}' not found.")
@@ -15,6 +18,7 @@ def load_image(path):
     return img
 
 
+# ────────────────────────────────────────────── 2. DISPLAY
 def display_step(image, title="Image Step", is_gray=False):
     if image is None:
         return
@@ -29,12 +33,23 @@ def display_step(image, title="Image Step", is_gray=False):
     plt.tight_layout()
     plt.show()
 
+# ────────────────────────────────────────────── 3. GRAYSCALE
 def convert_to_grayscale(image):
     if image is None:
         return None
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     print("Grayscale conversion complete.")
     return gray
+
+# ────────────────────────────────────────────── 4. THRESHOLDING 
+def apply_thresholding(gray_image):
+    if gray_image is None:
+        return None
+    blurred = cv2.GaussianBlur(gray_image, (5, 5), 0)
+    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    print("Otsu thresholding complete.")
+    return binary
+
 
 if __name__ == "__main__":
 
@@ -57,3 +72,6 @@ if __name__ == "__main__":
     gray = convert_to_grayscale(image_resized)
     display_step(gray, "2. Grayscale", is_gray=True)
 
+    # 3. Thresholding --> img binara
+    binary_mask = apply_thresholding(gray)
+    display_step(binary_mask, "4. Binary Image (Otsu)", is_gray=True)
