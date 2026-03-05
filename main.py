@@ -33,6 +33,7 @@ def display_step(image, title="Image Step", is_gray=False):
     plt.tight_layout()
     plt.show()
 
+# pre-procesarea Imaginii
 # ────────────────────────────────────────────── 3. GRAYSCALE
 def convert_to_grayscale(image):
     if image is None:
@@ -41,7 +42,18 @@ def convert_to_grayscale(image):
     print("Grayscale conversion complete.")
     return gray
 
-# ────────────────────────────────────────────── 4. THRESHOLDING 
+
+# ────────────────────────────────────────────── 4. CLAHE
+def apply_clahe(gray_image, clip_limit=2.0, tile_grid=(8, 8)):
+    if gray_image is None:
+        return None
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid)
+    enhanced = clahe.apply(gray_image)
+    print(f"CLAHE applied.")
+    return enhanced
+
+
+# ────────────────────────────────────────────── 5. THRESHOLDING 
 def apply_thresholding(gray_image):
     if gray_image is None:
         return None
@@ -50,7 +62,8 @@ def apply_thresholding(gray_image):
     print("Otsu thresholding complete.")
     return binary
 
-# ────────────────────────────────────────────── 5. EDGE DETECTION
+
+# ────────────────────────────────────────────── 6. EDGE DETECTION
 def enhance_for_contours(gray_image):
     if gray_image is None:
         return None
@@ -61,7 +74,21 @@ def enhance_for_contours(gray_image):
     print("Edge detection complete.")
     return dilated
 
-# ────────────────────────────────────────────── 6. FIND DOCUMENT CONTOUR
+# detectarea si extragerea Documentului
+# ────────────────────────────────────────────── 7. FIND DOCUMENT CONTOUR
+def is_rectangular_enough(approx, angle_tolerance=40):
+    pts = approx.reshape(4, 2).astype("float32")
+    for i in range(4):
+        p1 = pts[(i - 1) % 4]
+        p2 = pts[i]
+        p3 = pts[(i + 1) % 4]
+        v1 = p1 - p2
+        v2 = p3 - p2
+        cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6)
+        angle = np.degrees(np.arccos(np.clip(cos_angle, -1, 1)))
+        if abs(angle - 90) > angle_tolerance:
+            return False
+    return True
 
 def find_document_contour(edged_image, image_shape):
     MAX_CANDIDATES = 10
@@ -107,6 +134,7 @@ def find_document_contour(edged_image, image_shape):
     print("Error: no valid contour found.")
     return None, sorted_contours
 
+
 # ────────────────────────────────────────────── 8. ORDER POINTS
 def order_points(pts):
     pts = pts.reshape(4, 2).astype("float32")
@@ -118,6 +146,7 @@ def order_points(pts):
     rect[1] = pts[np.argmin(diff)] # top-right
     rect[3] = pts[np.argmax(diff)] # bottom-left
     return rect
+
 
 # ────────────────────────────────────────────── 9. PERSPECTIVE TRANSFORM
 def perspective_transform(image, pts):
@@ -144,6 +173,34 @@ def perspective_transform(image, pts):
     print(f"Perspective transform complete → {warped.shape[1]}x{warped.shape[0]}")
     return warped
 
+
+# ────────────────────────────────────────────── 10. QUALITY SCORE
+def calculate_quality_score(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Sharpness
+    sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    # Skew via Hough Lines
+    edges = cv2.Canny(gray, 50, 150)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=100)
+    skew_deg = 0.0
+    if lines is not None:
+        angles = []
+        for rho, theta in lines[:, 0]:
+            angle = np.degrees(theta) - 90
+            if -45 < angle < 45:
+                angles.append(angle)
+        if angles:
+            skew_deg = float(np.median(angles))
+
+    status = "Clear" if sharpness > 100 else "Blurry/Motion"
+    print(f"Quality → sharpness: {sharpness:.2f} ({status}) | skew: {skew_deg:.2f}°")
+    return {"sharpness": sharpness, "skew_deg": skew_deg, "status": status}
+
+
+# ────────────────────────────────────────────── PIPELINE
+
 if __name__ == "__main__":
 
     path = 'dataset/1.jpg'
@@ -165,15 +222,19 @@ if __name__ == "__main__":
     gray = convert_to_grayscale(image_resized)
     display_step(gray, "2. Grayscale", is_gray=True)
 
-    # 3. Thresholding --> img binara
-    binary_mask = apply_thresholding(gray)
+    # 3. CLAHE
+    gray_clahe = apply_clahe(gray)
+    display_step(gray_clahe, "3. CLAHE Enhanced", is_gray=True)
+
+    # 4. Thresholding --> img binara
+    binary_mask = apply_thresholding(gray_clahe)
     display_step(binary_mask, "4. Binary Image (Otsu)", is_gray=True)
 
-    # 4. Edge detection
-    edged = enhance_for_contours(gray)
+    # 5. Edge detection
+    edged = enhance_for_contours(gray_clahe)
     display_step(edged, "5. Edges (Canny + Dilation)", is_gray=True)
 
-    # 5. Find contour
+    # 6. Find contour
     doc_contour, all_contours = find_document_contour(edged, image_resized.shape)
 
     # top 10 contururi
@@ -186,12 +247,17 @@ if __name__ == "__main__":
         cv2.drawContours(img_selection, [doc_contour], -1, (0, 255, 0), 3)
         display_step(img_selection, "6b. Final Selected Contour")
 
-    # 6. Perspective transform pe originalul la rezolutie completa
+        # 7. Perspective transform pe originalul la rezolutie completa
         pts_orig = doc_contour.reshape(4, 2).astype("float32") * ratio
         warped = perspective_transform(orig, pts_orig)
         display_step(warped, "7. Warped (Perspective Corrected)")
-    
+
+        # 8. Quality score
+        scores = calculate_quality_score(warped)
+        label = (f"8. Final Result  |  "
+                 f"Sharpness: {scores['sharpness']:.1f} ({scores['status']})  |  "
+                 f"Skew: {scores['skew_deg']:.1f}°")
+        display_step(warped, label)
+
     else:
         print("Pipeline stopped: no valid document contour found.")
-
-
