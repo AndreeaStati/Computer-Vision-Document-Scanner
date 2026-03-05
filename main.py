@@ -29,13 +29,31 @@ def display_step(image, title="Image Step", is_gray=False):
     plt.tight_layout()
     plt.show()
 
+def convert_to_grayscale(image):
+    if image is None:
+        return None
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    print("Grayscale conversion complete.")
+    return gray
+
 if __name__ == "__main__":
 
     path = 'dataset/1.jpg'
 
+    # 1. Load
     image = load_image(path)
     if image is None:
         exit(1)
     display_step(image, "1. Original Image")
 
     orig = image.copy()
+
+    # Resize la 800px inaltime pentru procesare
+    HEIGHT_TARGET = 800.0
+    ratio = image.shape[0] / HEIGHT_TARGET
+    image_resized = cv2.resize(image, (int(image.shape[1] / ratio), int(HEIGHT_TARGET)))
+
+    # 2. Grayscale
+    gray = convert_to_grayscale(image_resized)
+    display_step(gray, "2. Grayscale", is_gray=True)
+
