@@ -58,6 +58,47 @@ def enhance_for_contours(gray_image):
     return dilated
 
 
+# ────────────────────────────────────────────── HOUGH + CORNERS
+def hough_corner_fallback(edged_image, image_shape):
+    lines = cv2.HoughLinesP(
+        edged_image,
+        1,
+        np.pi / 180,
+        threshold=80,
+        minLineLength=int(min(image_shape[:2]) * 0.25),
+        maxLineGap=20
+    )
+
+    if lines is None:
+        print("Hough fallback failed: no lines detected.")
+        return None
+
+    line_mask = np.zeros_like(edged_image)
+    for line in lines[:, 0]:
+        x1, y1, x2, y2 = line
+        cv2.line(line_mask, (x1, y1), (x2, y2), 255, 3)
+
+    line_mask = cv2.dilate(line_mask, np.ones((5, 5), np.uint8), iterations=2)
+
+    corners = cv2.goodFeaturesToTrack(
+        line_mask,
+        maxCorners=40,
+        qualityLevel=0.01,
+        minDistance=20
+    )
+
+    if corners is None or len(corners) < 4:
+        print("Hough fallback failed: not enough corners detected.")
+        return None
+
+    points = corners.reshape(-1, 2).astype(np.float32)
+    rect = cv2.minAreaRect(points)
+    box = cv2.boxPoints(rect).astype("int").reshape(4, 1, 2)
+
+    print(f"Hough + corner fallback used ({len(lines)} lines, {len(points)} corners).")
+    return box
+
+
 # ────────────────────────────────────────────── 7. FIND DOCUMENT CONTOUR
 def find_document_contour(edged_image, image_shape):
     MAX_CANDIDATES = 10
@@ -71,7 +112,8 @@ def find_document_contour(edged_image, image_shape):
         edged_image.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
     )
     if not contours:
-        return None, []
+        fallback = hough_corner_fallback(edged_image, image_shape)
+        return fallback, [], "hough_corners" if fallback is not None else "none"
 
     sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
@@ -86,7 +128,7 @@ def find_document_contour(edged_image, image_shape):
             approx = cv2.approxPolyDP(c, eps * peri, True)
             if len(approx) == 4:
                 print(f"4-corner contour found (epsilon={eps}, area_ratio={ratio:.2f}).")
-                return approx, sorted_contours
+                return approx, sorted_contours, "contour"
 
     print("No 4-corner contour found. Fallback: minAreaRect.")
     for c in sorted_contours[:MAX_CANDIDATES]:
@@ -98,10 +140,14 @@ def find_document_contour(edged_image, image_shape):
         box = cv2.boxPoints(rect)
         contour_box = box.astype("int").reshape(4, 1, 2)
         print(f"minAreaRect fallback used (area_ratio={ratio:.2f}).")
-        return contour_box, sorted_contours
+        return contour_box, sorted_contours, "minAreaRect"
+
+    fallback = hough_corner_fallback(edged_image, image_shape)
+    if fallback is not None:
+        return fallback, sorted_contours, "hough_corners"
 
     print("Error: no valid contour found.")
-    return None, sorted_contours
+    return None, sorted_contours, "none"
 
 
 # ────────────────────────────────────────────── 8. ORDER POINTS
@@ -122,8 +168,8 @@ def perspective_transform(image, pts):
     rect = order_points(pts)
     (tl, tr, br, bl) = rect
 
-    widthA  = np.linalg.norm(br - bl)
-    widthB  = np.linalg.norm(tr - tl)
+    widthA = np.linalg.norm(br - bl)
+    widthB = np.linalg.norm(tr - tl)
     maxWidth = max(int(widthA), int(widthB))
 
     heightA = np.linalg.norm(tr - br)
@@ -170,7 +216,6 @@ def calculate_quality_score(image):
 def to_rgb(img, is_gray=False):
     """Converts image to RGB numpy array for matplotlib display."""
     if img is None:
-        # Return a black placeholder
         return np.zeros((100, 100, 3), dtype=np.uint8)
     if is_gray or len(img.shape) == 2:
         return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
@@ -185,7 +230,6 @@ def process_image(path):
     """
     steps = []
 
-    # 1. Load
     image = load_image(path)
     if image is None:
         return steps
@@ -197,40 +241,32 @@ def process_image(path):
     ratio = image.shape[0] / HEIGHT_TARGET
     image_resized = cv2.resize(image, (int(image.shape[1] / ratio), int(HEIGHT_TARGET)))
 
-    # 2. Grayscale
     gray = convert_to_grayscale(image_resized)
     steps.append(("2. Grayscale", to_rgb(gray, is_gray=True)))
 
-    # 3. CLAHE
     gray_clahe = apply_clahe(gray)
     steps.append(("3. CLAHE", to_rgb(gray_clahe, is_gray=True)))
 
-    # 4. Thresholding
     binary_mask = apply_thresholding(gray_clahe)
     steps.append(("4. Binary (Otsu)", to_rgb(binary_mask, is_gray=True)))
 
-    # 5. Edge detection
     edged = enhance_for_contours(gray_clahe)
     steps.append(("5. Edges (Canny+Dilation)", to_rgb(edged, is_gray=True)))
 
-    # 6a. Top 10 contours debug
-    doc_contour, all_contours = find_document_contour(edged, image_resized.shape)
+    doc_contour, all_contours, method = find_document_contour(edged, image_resized.shape)
     img_debug = image_resized.copy()
     cv2.drawContours(img_debug, all_contours[:10], -1, (0, 255, 255), 2)
     steps.append(("6a. Top 10 Contours", to_rgb(img_debug)))
 
     if doc_contour is not None:
-        # 6b. Selected contour
         img_selection = image_resized.copy()
         cv2.drawContours(img_selection, [doc_contour], -1, (0, 255, 0), 3)
-        steps.append(("6b. Selected Contour", to_rgb(img_selection)))
+        steps.append((f"6b. Selected Boundary ({method})", to_rgb(img_selection)))
 
-        # 7. Perspective transform
         pts_orig = doc_contour.reshape(4, 2).astype("float32") * ratio
         warped = perspective_transform(orig, pts_orig)
         steps.append(("7. Perspective Corrected", to_rgb(warped)))
 
-        # 8. Quality score — doar în consolă
         calculate_quality_score(warped)
     else:
         steps.append(("6b. No contour found", to_rgb(image_resized)))
@@ -243,16 +279,15 @@ def process_image(path):
 def show_steps_grid(steps, image_name, image_index, total_images):
     n = len(steps)
     cols = 3
-    rows = (n + cols - 1) // cols  # ceiling division
+    rows = (n + cols - 1) // cols
 
     fig, axes = plt.subplots(rows, cols, figsize=(14, rows * 3.5))
     fig.suptitle(
-        f"[{image_index}/{total_images}]  {image_name}   —   Enter = următoarea imagine  |  Q / Esc = ieșire",
+        f"[{image_index}/{total_images}]  {image_name}   —   Enter = urmatoarea imagine  |  Q / Esc = iesire",
         fontsize=12, fontweight='bold'
     )
     plt.subplots_adjust(top=0.93)
 
-    # Flatten axes for easy indexing
     axes_flat = axes.flatten() if rows > 1 else (axes if cols > 1 else [axes])
 
     for i, (title, img) in enumerate(steps):
@@ -260,13 +295,11 @@ def show_steps_grid(steps, image_name, image_index, total_images):
         axes_flat[i].set_title(title, fontsize=9)
         axes_flat[i].axis('off')
 
-    # Hide unused subplots
     for j in range(n, len(axes_flat)):
         axes_flat[j].axis('off')
 
     plt.tight_layout()
 
-    # Enter = next image | Q / Escape = quit
     quit_flag = [False]
 
     def on_key(event):
@@ -286,7 +319,6 @@ def show_steps_grid(steps, image_name, image_index, total_images):
 if __name__ == "__main__":
     dataset_dir = 'dataset'
 
-    # Collect all image files from dataset/
     supported_ext = ('.jpg', '.jpeg', '.png')
     image_files = sorted([
         f for f in os.listdir(dataset_dir)
