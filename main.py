@@ -46,6 +46,19 @@ def apply_thresholding(gray_image):
     return binary
 
 
+# ────────────────────────────────────────────── W5 BINARIZATION AFTER RECTIFICATION
+def apply_adaptive_thresholding(gray_image):
+    if gray_image is None:
+        return None
+    blurred = cv2.GaussianBlur(gray_image, (5, 5), 0)
+    binary = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, 21, 10
+    )
+    print("Adaptive thresholding complete.")
+    return binary
+
+
 # ────────────────────────────────────────────── 6. EDGE DETECTION
 def enhance_for_contours(gray_image):
     if gray_image is None:
@@ -58,7 +71,7 @@ def enhance_for_contours(gray_image):
     return dilated
 
 
-# ────────────────────────────────────────────── HOUGH + CORNERS
+# ────────────────────────────────────────────── W4 FALLBACK: HOUGH + CORNERS
 def hough_corner_fallback(edged_image, image_shape):
     lines = cv2.HoughLinesP(
         edged_image,
@@ -267,6 +280,13 @@ def process_image(path):
         warped = perspective_transform(orig, pts_orig)
         steps.append(("7. Perspective Corrected", to_rgb(warped)))
 
+        warped_gray = convert_to_grayscale(warped)
+        otsu_scan = apply_thresholding(warped_gray)
+        adaptive_scan = apply_adaptive_thresholding(warped_gray)
+
+        steps.append(("8. Scan (Otsu)", to_rgb(otsu_scan, is_gray=True)))
+        steps.append(("9. Scan (Adaptive)", to_rgb(adaptive_scan, is_gray=True)))
+
         calculate_quality_score(warped)
     else:
         steps.append(("6b. No contour found", to_rgb(image_resized)))
@@ -283,7 +303,7 @@ def show_steps_grid(steps, image_name, image_index, total_images):
 
     fig, axes = plt.subplots(rows, cols, figsize=(14, rows * 3.5))
     fig.suptitle(
-        f"[{image_index}/{total_images}]  {image_name}   —   Enter = urmatoarea imagine  |  Q / Esc = iesire",
+        f"[{image_index}/{total_images}]  {image_name}   —   Enter = următoarea imagine  |  Q / Esc = ieșire",
         fontsize=12, fontweight='bold'
     )
     plt.subplots_adjust(top=0.93)
