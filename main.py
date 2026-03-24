@@ -2,6 +2,7 @@ import cv2
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+import csv
 
 
 # ────────────────────────────────────────────── 1. LOAD
@@ -236,16 +237,26 @@ def to_rgb(img, is_gray=False):
 
 
 # ────────────────────────────────────────────── PROCESS ONE IMAGE
-def process_image(path):
+def process_image(path, save_outputs=False, output_dir='outputs_week6'):
     """
     Runs the full pipeline on one image.
-    Returns a list of (title, rgb_image) tuples — one per step.
+    Returns:
+        steps  -> list of (title, rgb_image) tuples for display
+        report -> dict with basic results for batch mode
     """
     steps = []
+    report = {
+        "image_name": os.path.basename(path),
+        "detected": False,
+        "method": "",
+        "sharpness": "",
+        "skew_deg": "",
+        "status": ""
+    }
 
     image = load_image(path)
     if image is None:
-        return steps
+        return steps, report
     steps.append(("1. Original", to_rgb(image)))
 
     orig = image.copy()
@@ -272,6 +283,9 @@ def process_image(path):
     steps.append(("6a. Top 10 Contours", to_rgb(img_debug)))
 
     if doc_contour is not None:
+        report["detected"] = True
+        report["method"] = method
+
         img_selection = image_resized.copy()
         cv2.drawContours(img_selection, [doc_contour], -1, (0, 255, 0), 3)
         steps.append((f"6b. Selected Boundary ({method})", to_rgb(img_selection)))
@@ -287,12 +301,22 @@ def process_image(path):
         steps.append(("8. Scan (Otsu)", to_rgb(otsu_scan, is_gray=True)))
         steps.append(("9. Scan (Adaptive)", to_rgb(adaptive_scan, is_gray=True)))
 
-        calculate_quality_score(warped)
+        quality = calculate_quality_score(warped)
+        report["sharpness"] = f"{quality['sharpness']:.2f}"
+        report["skew_deg"] = f"{quality['skew_deg']:.2f}"
+        report["status"] = quality["status"]
+
+        if save_outputs:
+            os.makedirs(output_dir, exist_ok=True)
+            base_name = os.path.splitext(os.path.basename(path))[0]
+            cv2.imwrite(os.path.join(output_dir, f"{base_name}_warped.jpg"), warped)
+            cv2.imwrite(os.path.join(output_dir, f"{base_name}_otsu.jpg"), otsu_scan)
+            cv2.imwrite(os.path.join(output_dir, f"{base_name}_adaptive.jpg"), adaptive_scan)
     else:
         steps.append(("6b. No contour found", to_rgb(image_resized)))
         print("Pipeline stopped: no valid document contour found.")
 
-    return steps
+    return steps, report
 
 
 # ────────────────────────────────────────────── DISPLAY ALL STEPS IN GRID
@@ -335,9 +359,26 @@ def show_steps_grid(steps, image_name, image_index, total_images):
     return quit_flag[0]
 
 
+# ────────────────────────────────────────────── SAVE BATCH REPORT
+def save_summary_csv(reports, output_dir='outputs_week6'):
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = os.path.join(output_dir, 'summary_week6.csv')
+
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["image_name", "detected", "method", "sharpness", "skew_deg", "status"]
+        )
+        writer.writeheader()
+        writer.writerows(reports)
+
+    print(f"Summary saved to: {csv_path}")
+
+
 # ────────────────────────────────────────────── MAIN
 if __name__ == "__main__":
     dataset_dir = 'dataset'
+    output_dir = 'outputs_week6'
 
     supported_ext = ('.jpg', '.jpeg', '.png')
     image_files = sorted([
@@ -352,13 +393,16 @@ if __name__ == "__main__":
     total = len(image_files)
     print(f"Found {total} image(s) in '{dataset_dir}/'.\n")
 
+    reports = []
+
     for idx, filename in enumerate(image_files, start=1):
         path = os.path.join(dataset_dir, filename)
         print(f"\n{'='*60}")
         print(f"Processing image {idx}/{total}: {filename}")
         print(f"{'='*60}")
 
-        steps = process_image(path)
+        steps, report = process_image(path, save_outputs=True, output_dir=output_dir)
+        reports.append(report)
 
         if steps:
             should_quit = show_steps_grid(steps, filename, idx, total)
@@ -368,4 +412,5 @@ if __name__ == "__main__":
         else:
             print(f"Skipping display for {filename} (no steps generated).")
 
+    save_summary_csv(reports, output_dir=output_dir)
     print("\nAll images processed.")
