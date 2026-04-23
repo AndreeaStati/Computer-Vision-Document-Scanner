@@ -4,7 +4,6 @@ import os
 import numpy as np
 import csv
 
-
 # ────────────────────────────────────────────── 1. LOAD
 def load_image(path):
     if not os.path.exists(path):
@@ -17,8 +16,7 @@ def load_image(path):
     print(f"Successfully loaded: {path}  |  shape: {img.shape}")
     return img
 
-
-# ────────────────────────────────────────────── 3. GRAYSCALE
+# ────────────────────────────────────────────── 2. GRAYSCALE
 def convert_to_grayscale(image):
     if image is None:
         return None
@@ -26,8 +24,7 @@ def convert_to_grayscale(image):
     print("Grayscale conversion complete.")
     return gray
 
-
-# ────────────────────────────────────────────── 4. CLAHE
+# ────────────────────────────────────────────── 3. CLAHE
 def apply_clahe(gray_image, clip_limit=2.0, tile_grid=(8, 8)):
     if gray_image is None:
         return None
@@ -36,8 +33,7 @@ def apply_clahe(gray_image, clip_limit=2.0, tile_grid=(8, 8)):
     print(f"CLAHE applied.")
     return enhanced
 
-
-# ────────────────────────────────────────────── 5. THRESHOLDING
+# ────────────────────────────────────────────── 4. THRESHOLDING
 def apply_thresholding(gray_image):
     if gray_image is None:
         return None
@@ -46,8 +42,7 @@ def apply_thresholding(gray_image):
     print("Otsu thresholding complete.")
     return binary
 
-
-# ────────────────────────────────────────────── W5 BINARIZATION AFTER RECTIFICATION
+# ────────────────────────────────────────────── 5. ADAPTIVE THRESHOLDING
 def apply_adaptive_thresholding(gray_image):
     if gray_image is None:
         return None
@@ -59,8 +54,7 @@ def apply_adaptive_thresholding(gray_image):
     print("Adaptive thresholding complete.")
     return binary
 
-
-# ────────────────────────────────────────────── 6. EDGE DETECTION
+# ────────────────────────────────────────────── 6a. EDGE DETECTION ORIGINAL
 def enhance_for_contours(gray_image):
     if gray_image is None:
         return None
@@ -68,23 +62,71 @@ def enhance_for_contours(gray_image):
     edged = cv2.Canny(blurred, 50, 150)
     kernel = np.ones((5, 5), np.uint8)
     dilated = cv2.dilate(edged, kernel, iterations=2)
-    print("Edge detection complete.")
     return dilated
 
+# ────────────────────────────────────────────── 6b. EDGE DETECTION ROBUST (fara zgomot)
+def enhance_for_contours_robust(gray_image):
+    if gray_image is None:
+        return None
+    blurred = cv2.bilateralFilter(gray_image, 9, 75, 75)
+    edged = cv2.Canny(blurred, 30, 100)
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    closed = cv2.morphologyEx(edged, cv2.MORPH_CLOSE, kernel)
+    
+    dilated = cv2.dilate(closed, np.ones((3, 3), np.uint8), iterations=1)
+    return dilated
 
-# ────────────────────────────────────────────── W4 FALLBACK: HOUGH + CORNERS
+# ────────────────────────────────────────────── 6c. EDGE DETECTION ADAPTIVE
+def enhance_for_contours_adaptive(gray_image):
+    if gray_image is None:
+        return None
+    blurred = cv2.GaussianBlur(gray_image, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 11, 2
+    )
+    thresh = cv2.bitwise_not(thresh)
+    
+    kernel = np.ones((5, 5), np.uint8)
+    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    return closed
+
+# ────────────────────────────────────────────── HELPER: VALIDARE CONTUR
+def is_good_contour(contour, image_shape):
+    if contour is None or len(contour) != 4:
+        return False
+    
+    area = cv2.contourArea(contour)
+    img_area = image_shape[0] * image_shape[1]
+    
+    if not (0.15 < (area / img_area) < 0.95):
+        return False
+        
+    if not cv2.isContourConvex(contour):
+        return False
+        
+    rect = cv2.minAreaRect(contour)
+    (w, h) = rect[1]
+    if min(w, h) == 0: 
+        return False
+    aspect_ratio = max(w, h) / min(w, h)
+    
+    if aspect_ratio > 2.5: 
+        return False
+        
+    return True
+
+
+# ────────────────────────────────────────────── 7. HOUGH CORNER FALLBACK 
 def hough_corner_fallback(edged_image, image_shape):
     lines = cv2.HoughLinesP(
-        edged_image,
-        1,
-        np.pi / 180,
-        threshold=80,
-        minLineLength=int(min(image_shape[:2]) * 0.25),
-        maxLineGap=20
+        edged_image, 1, np.pi / 180, threshold=80,
+        minLineLength=int(min(image_shape[:2]) * 0.25), maxLineGap=20
     )
 
     if lines is None:
-        print("Hough fallback failed: no lines detected.")
         return None
 
     line_mask = np.zeros_like(edged_image)
@@ -95,76 +137,82 @@ def hough_corner_fallback(edged_image, image_shape):
     line_mask = cv2.dilate(line_mask, np.ones((5, 5), np.uint8), iterations=2)
 
     corners = cv2.goodFeaturesToTrack(
-        line_mask,
-        maxCorners=40,
-        qualityLevel=0.01,
-        minDistance=20
+        line_mask, maxCorners=40, qualityLevel=0.01, minDistance=20
     )
 
     if corners is None or len(corners) < 4:
-        print("Hough fallback failed: not enough corners detected.")
         return None
 
     points = corners.reshape(-1, 2).astype(np.float32)
     rect = cv2.minAreaRect(points)
     box = cv2.boxPoints(rect).astype("int").reshape(4, 1, 2)
-
-    print(f"Hough + corner fallback used ({len(lines)} lines, {len(points)} corners).")
     return box
 
-
-# ────────────────────────────────────────────── 7. FIND DOCUMENT CONTOUR
-def find_document_contour(edged_image, image_shape):
+# ────────────────────────────────────────────── 8. FIND DOCUMENT (MULTI-PASS)
+def find_document_contour(gray_image, image_shape):
     MAX_CANDIDATES = 10
-    EPSILONS = [0.01, 0.02, 0.03, 0.04, 0.05]
-    MAX_AREA_RATIO = 0.97
-    MIN_AREA_RATIO = 0.10
-
+    EPSILONS = [0.02, 0.04, 0.06, 0.08, 0.10] 
     img_area = image_shape[0] * image_shape[1]
 
-    contours, _ = cv2.findContours(
-        edged_image.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE
-    )
-    if not contours:
-        fallback = hough_corner_fallback(edged_image, image_shape)
-        return fallback, [], "hough_corners" if fallback is not None else "none"
+    def extract_contour_from_edges(edges_img):
+        contours, _ = cv2.findContours(edges_img.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        
+        for c in sorted_contours[:MAX_CANDIDATES]:
+            peri = cv2.arcLength(c, True)
+            for eps in EPSILONS:
+                approx = cv2.approxPolyDP(c, eps * peri, True)
+                if is_good_contour(approx, image_shape):
+                    return approx, sorted_contours
+        return None, sorted_contours
 
-    sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    edges_1 = enhance_for_contours_robust(gray_image)
+    contour_1, all_1 = extract_contour_from_edges(edges_1)
+    if contour_1 is not None:
+        print("Gasit prin: Strategia 1 (Bilateral+Close)")
+        return contour_1, all_1, "Bilateral+Close", edges_1
 
-    for c in sorted_contours[:MAX_CANDIDATES]:
-        area = cv2.contourArea(c)
-        ratio = area / img_area
-        if ratio < MIN_AREA_RATIO or ratio > MAX_AREA_RATIO:
-            continue
+    edges_adaptive = enhance_for_contours_adaptive(gray_image)
+    contour_adap, all_adap = extract_contour_from_edges(edges_adaptive)
+    if contour_adap is not None:
+        print("Gasit prin: Strategia 2 (Adaptive Edge)")
+        return contour_adap, all_adap, "Adaptive Edge", edges_adaptive
 
-        peri = cv2.arcLength(c, True)
-        for eps in EPSILONS:
-            approx = cv2.approxPolyDP(c, eps * peri, True)
-            if len(approx) == 4:
-                print(f"4-corner contour found (epsilon={eps}, area_ratio={ratio:.2f}).")
-                return approx, sorted_contours, "contour"
+    blurred = cv2.GaussianBlur(gray_image, (11, 11), 0)
+    _, thresh_img = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    contour_3, all_3 = extract_contour_from_edges(thresh_img)
+    if contour_3 is not None:
+        print("Gasit prin: Strategia 3 (Otsu Blob)")
+        return contour_3, all_3, "Otsu Blob", thresh_img
 
-    print("No 4-corner contour found. Fallback: minAreaRect.")
-    for c in sorted_contours[:MAX_CANDIDATES]:
-        area = cv2.contourArea(c)
-        ratio = area / img_area
-        if ratio < MIN_AREA_RATIO or ratio > MAX_AREA_RATIO:
-            continue
+    print("Încerc fallback cu MinAreaRect pe pata Otsu.")
+    contours_otsu, _ = cv2.findContours(thresh_img.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours_otsu:
+        sorted_otsu = sorted(contours_otsu, key=cv2.contourArea, reverse=True)
+        for c in sorted_otsu[:5]:
+            area = cv2.contourArea(c)
+            if 0.15 < (area / img_area) < 0.95:
+                rect = cv2.minAreaRect(c)
+                box = cv2.boxPoints(rect).astype("int").reshape(4, 1, 2)
+                return box, sorted_otsu, "MinAreaRect (Otsu)", thresh_img
+                
+    print("Incerc fallback cu MinAreaRect pe limitele exterioare (Edges).")
+    for c in all_1[:10]:
         rect = cv2.minAreaRect(c)
-        box = cv2.boxPoints(rect)
-        contour_box = box.astype("int").reshape(4, 1, 2)
-        print(f"minAreaRect fallback used (area_ratio={ratio:.2f}).")
-        return contour_box, sorted_contours, "minAreaRect"
+        w, h = rect[1]
+        rect_area = w * h  
+        
+        # Verificăm dacă cutia care încadrează aceste margini e destul de mare
+        if 0.15 < (rect_area / img_area) < 0.95:
+            aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 100
+            if aspect_ratio < 3.0:
+                box = cv2.boxPoints(rect).astype("int").reshape(4, 1, 2)
+                return box, all_1, "MinAreaRect (Edges)", edges_1
 
-    fallback = hough_corner_fallback(edged_image, image_shape)
-    if fallback is not None:
-        return fallback, sorted_contours, "hough_corners"
+    print("Eroare: Niciun contur valid nu a fost gasit in nicio strategie.")
+    return None, all_1, "none", edges_1
 
-    print("Error: no valid contour found.")
-    return None, sorted_contours, "none"
-
-
-# ────────────────────────────────────────────── 8. ORDER POINTS
+# ────────────────────────────────────────────── 9. ORDER POINTS
 def order_points(pts):
     pts = pts.reshape(4, 2).astype("float32")
     rect = np.zeros((4, 2), dtype="float32")
@@ -176,8 +224,7 @@ def order_points(pts):
     rect[3] = pts[np.argmax(diff)]
     return rect
 
-
-# ────────────────────────────────────────────── 9. PERSPECTIVE TRANSFORM
+# ────────────────────────────────────────────── 10. PERSPECTIVE TRANSFORM
 def perspective_transform(image, pts):
     rect = order_points(pts)
     (tl, tr, br, bl) = rect
@@ -202,8 +249,7 @@ def perspective_transform(image, pts):
     print(f"Perspective transform complete → {warped.shape[1]}x{warped.shape[0]}")
     return warped
 
-
-# ────────────────────────────────────────────── 10. QUALITY SCORE
+# ────────────────────────────────────────────── 11. QUALITY SCORE
 def calculate_quality_score(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -222,28 +268,19 @@ def calculate_quality_score(image):
             skew_deg = float(np.median(angles))
 
     status = "Clear" if sharpness > 100 else "Blurry/Motion"
-    print(f"Quality → sharpness: {sharpness:.2f} ({status}) | skew: {skew_deg:.2f}°")
+    print(f"Quality --> sharpness: {sharpness:.2f} ({status}) | skew: {skew_deg:.2f}°")
     return {"sharpness": sharpness, "skew_deg": skew_deg, "status": status}
 
-
-# ────────────────────────────────────────────── HELPER: to RGB for display
+# ────────────────────────────────────────────── HELPER: to RGB
 def to_rgb(img, is_gray=False):
-    """Converts image to RGB numpy array for matplotlib display."""
     if img is None:
         return np.zeros((100, 100, 3), dtype=np.uint8)
     if is_gray or len(img.shape) == 2:
         return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-
 # ────────────────────────────────────────────── PROCESS ONE IMAGE
 def process_image(path, save_outputs=False, output_dir='outputs_week6'):
-    """
-    Runs the full pipeline on one image.
-    Returns:
-        steps  -> list of (title, rgb_image) tuples for display
-        report -> dict with basic results for batch mode
-    """
     steps = []
     report = {
         "image_name": os.path.basename(path),
@@ -257,30 +294,24 @@ def process_image(path, save_outputs=False, output_dir='outputs_week6'):
     image = load_image(path)
     if image is None:
         return steps, report
-    steps.append(("1. Original", to_rgb(image)))
-
+    
     orig = image.copy()
-
     HEIGHT_TARGET = 800.0
     ratio = image.shape[0] / HEIGHT_TARGET
     image_resized = cv2.resize(image, (int(image.shape[1] / ratio), int(HEIGHT_TARGET)))
 
+    steps.append(("1. Original", to_rgb(image_resized)))
+
     gray = convert_to_grayscale(image_resized)
     steps.append(("2. Grayscale", to_rgb(gray, is_gray=True)))
 
-    gray_clahe = apply_clahe(gray)
-    steps.append(("3. CLAHE", to_rgb(gray_clahe, is_gray=True)))
+    doc_contour, all_contours, method, best_edges = find_document_contour(gray, image_resized.shape)
+    
+    steps.append((f"3. Edges/Mask ({method})", to_rgb(best_edges, is_gray=True)))
 
-    binary_mask = apply_thresholding(gray_clahe)
-    steps.append(("4. Binary (Otsu)", to_rgb(binary_mask, is_gray=True)))
-
-    edged = enhance_for_contours(gray_clahe)
-    steps.append(("5. Edges (Canny+Dilation)", to_rgb(edged, is_gray=True)))
-
-    doc_contour, all_contours, method = find_document_contour(edged, image_resized.shape)
     img_debug = image_resized.copy()
     cv2.drawContours(img_debug, all_contours[:10], -1, (0, 255, 255), 2)
-    steps.append(("6a. Top 10 Contours", to_rgb(img_debug)))
+    steps.append(("4. Top 10 Contours", to_rgb(img_debug)))
 
     if doc_contour is not None:
         report["detected"] = True
@@ -288,15 +319,18 @@ def process_image(path, save_outputs=False, output_dir='outputs_week6'):
 
         img_selection = image_resized.copy()
         cv2.drawContours(img_selection, [doc_contour], -1, (0, 255, 0), 3)
-        steps.append((f"6b. Selected Boundary ({method})", to_rgb(img_selection)))
+        steps.append((f"5. Boundary ({method})", to_rgb(img_selection)))
 
         pts_orig = doc_contour.reshape(4, 2).astype("float32") * ratio
         warped = perspective_transform(orig, pts_orig)
-        steps.append(("7. Perspective Corrected", to_rgb(warped)))
+        steps.append(("6. Perspective Corrected", to_rgb(warped)))
 
         warped_gray = convert_to_grayscale(warped)
-        otsu_scan = apply_thresholding(warped_gray)
-        adaptive_scan = apply_adaptive_thresholding(warped_gray)
+        warped_clahe = apply_clahe(warped_gray)
+        steps.append(("7. Crop + CLAHE (Text Enhance)", to_rgb(warped_clahe, is_gray=True)))
+
+        otsu_scan = apply_thresholding(warped_clahe)
+        adaptive_scan = apply_adaptive_thresholding(warped_clahe)
 
         steps.append(("8. Scan (Otsu)", to_rgb(otsu_scan, is_gray=True)))
         steps.append(("9. Scan (Adaptive)", to_rgb(adaptive_scan, is_gray=True)))
@@ -313,13 +347,12 @@ def process_image(path, save_outputs=False, output_dir='outputs_week6'):
             cv2.imwrite(os.path.join(output_dir, f"{base_name}_otsu.jpg"), otsu_scan)
             cv2.imwrite(os.path.join(output_dir, f"{base_name}_adaptive.jpg"), adaptive_scan)
     else:
-        steps.append(("6b. No contour found", to_rgb(image_resized)))
+        steps.append(("5. No contour found", to_rgb(image_resized)))
         print("Pipeline stopped: no valid document contour found.")
 
     return steps, report
 
-
-# ────────────────────────────────────────────── DISPLAY ALL STEPS IN GRID
+# ────────────────────────────────────────────── DISPLAY 
 def show_steps_grid(steps, image_name, image_index, total_images):
     n = len(steps)
     cols = 3
@@ -327,7 +360,7 @@ def show_steps_grid(steps, image_name, image_index, total_images):
 
     fig, axes = plt.subplots(rows, cols, figsize=(14, rows * 3.5))
     fig.suptitle(
-        f"[{image_index}/{total_images}]  {image_name}   —   Enter = următoarea imagine  |  Q / Esc = ieșire",
+        f"[{image_index}/{total_images}]  {image_name}   —   Enter = urmatoarea imagine  |  Q / Esc = iesire",
         fontsize=12, fontweight='bold'
     )
     plt.subplots_adjust(top=0.93)
@@ -358,8 +391,7 @@ def show_steps_grid(steps, image_name, image_index, total_images):
 
     return quit_flag[0]
 
-
-# ────────────────────────────────────────────── SAVE BATCH REPORT
+# ────────────────────────────────────────────── SAVE REPORT 
 def save_summary_csv(reports, output_dir='outputs_week6'):
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(output_dir, 'summary_week6.csv')
@@ -374,20 +406,23 @@ def save_summary_csv(reports, output_dir='outputs_week6'):
 
     print(f"Summary saved to: {csv_path}")
 
-
 # ────────────────────────────────────────────── MAIN
 if __name__ == "__main__":
     dataset_dir = 'dataset'
     output_dir = 'outputs_week6'
 
     supported_ext = ('.jpg', '.jpeg', '.png')
+    
+    if not os.path.exists(dataset_dir):
+        os.makedirs(dataset_dir)
+        
     image_files = sorted([
         f for f in os.listdir(dataset_dir)
         if f.lower().endswith(supported_ext)
     ])
 
     if not image_files:
-        print(f"No images found in '{dataset_dir}/'.")
+        print(f"No images found in '{dataset_dir}/'. Please add images to test.")
         exit(1)
 
     total = len(image_files)
