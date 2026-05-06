@@ -1,0 +1,4 @@
+lighting,background,total_images,accepted_images,accepted_rate_%
+normal,simple,5,4,80.00
+bright,simple,1,0,0.00
+normal,cluttered,3,3,100.00

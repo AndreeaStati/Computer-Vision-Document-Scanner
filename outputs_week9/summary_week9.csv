@@ -1,0 +1,10 @@
+image_name,detected,method,preferred_scan,sharpness,skew_deg,status,decision,reject_reason,lighting,background,otsu_black_ratio,adaptive_black_ratio
+1.jpg,True,Bilateral+Close,Otsu,574.70,0.00,Clear,Accepted,-,normal,simple,0.1592,0.2041
+10.jpg,True,Bilateral+Close,Otsu,1479.30,0.00,Clear,Accepted,-,normal,simple,0.1412,0.1367
+11.jpg,True,Adaptive Edge,Otsu,414.21,-4.00,Clear,Accepted,-,normal,simple,0.0827,0.0680
+12.jpg,True,Adaptive Edge,Otsu,43.87,0.00,Blurry/Motion,Rejected,low_sharpness,bright,simple,0.0880,0.0505
+13.jpg,True,Otsu Blob,Adaptive,57.27,-3.00,Blurry/Motion,Rejected,low_sharpness,normal,simple,0.1201,0.1415
+14.jpg,True,Hough+Corners,Otsu,169.34,8.00,Clear,Accepted,-,normal,simple,0.2020,0.2329
+15.jpg,True,Adaptive Edge,Adaptive,1039.31,0.00,Clear,Accepted,-,normal,cluttered,0.2139,0.1838
+16.jpg,True,Bilateral+Close,Otsu,871.44,-1.00,Clear,Accepted,-,normal,cluttered,0.1876,0.2078
+17.jpg,True,Bilateral+Close,Otsu,652.29,4.00,Clear,Accepted,-,normal,cluttered,0.1340,0.1872
